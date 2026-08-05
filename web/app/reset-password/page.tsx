@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff, Lock } from 'lucide-react';
 import { ApiClientError, resetPassword } from '@/lib/api-client';
-import { BRAND_NAME, LogoMark } from '@/components/brand';
+import { AuthLayout } from '@/components/auth-layout';
 
 function ResetPasswordForm() {
   const router = useRouter();
@@ -42,13 +42,13 @@ function ResetPasswordForm() {
   if (!token) {
     return (
       <div className="text-center">
-        <h2 className="text-lg font-semibold text-emerald-800">Invalid reset link</h2>
+        <h2 className="font-serif text-lg font-semibold text-emerald-deep">Invalid reset link</h2>
         <p className="mt-2 text-sm text-gray-500">
           This link is missing its reset token. Request a new one from the forgot password page.
         </p>
         <Link
           href="/forgot-password"
-          className="mt-5 inline-block text-sm font-medium text-emerald-700 hover:text-emerald-800"
+          className="mt-5 inline-block text-sm font-semibold text-warm-gold hover:text-warm-gold/80"
         >
           Request a new link
         </Link>
@@ -59,9 +59,9 @@ function ResetPasswordForm() {
   if (done) {
     return (
       <div className="text-center">
-        <h2 className="text-lg font-semibold text-emerald-800">Password reset</h2>
+        <h2 className="font-serif text-lg font-semibold text-emerald-deep">Password reset</h2>
         <p className="mt-2 text-sm text-gray-500">Your password has been changed. You can now sign in.</p>
-        <Link href="/login" className="mt-5 inline-block text-sm font-medium text-emerald-700 hover:text-emerald-800">
+        <Link href="/login" className="mt-5 inline-block text-sm font-semibold text-warm-gold hover:text-warm-gold/80">
           Back to sign in
         </Link>
       </div>
@@ -70,7 +70,7 @@ function ResetPasswordForm() {
 
   return (
     <>
-      <h2 className="text-center text-lg font-semibold text-emerald-800">Set a new password</h2>
+      <h2 className="text-center font-serif text-lg font-semibold text-emerald-deep">Set a new password</h2>
       <form onSubmit={handleSubmit} className="mt-5 space-y-4">
         <div>
           <label htmlFor="newPassword" className="text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -86,7 +86,7 @@ function ResetPasswordForm() {
               autoComplete="new-password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full rounded-lg border border-emerald-100 bg-emerald-50/60 py-2.5 pl-10 pr-10 text-sm text-gray-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-10 pr-10 text-sm text-gray-900 focus:border-royal-blue focus:outline-none focus:ring-1 focus:ring-royal-blue"
             />
             <button
               type="button"
@@ -113,7 +113,7 @@ function ResetPasswordForm() {
               autoComplete="new-password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full rounded-lg border border-emerald-100 bg-emerald-50/60 py-2.5 pl-10 pr-10 text-sm text-gray-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-10 pr-10 text-sm text-gray-900 focus:border-royal-blue focus:outline-none focus:ring-1 focus:ring-royal-blue"
             />
           </div>
         </div>
@@ -123,7 +123,7 @@ function ResetPasswordForm() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full rounded-lg bg-emerald-800 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-900 disabled:bg-emerald-300"
+          className="w-full rounded-lg bg-emerald-deep py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-deep/90 disabled:bg-emerald-deep/40"
         >
           {loading ? 'Resetting…' : 'Reset password'}
         </button>
@@ -134,17 +134,10 @@ function ResetPasswordForm() {
 
 export default function ResetPasswordPage() {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-8 bg-white px-4 py-12">
-      <div className="flex flex-col items-center gap-3">
-        <LogoMark className="h-16 w-16" />
-        <h1 className="font-serif text-xl font-bold text-emerald-800">{BRAND_NAME}</h1>
-      </div>
-
-      <div className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-        <Suspense fallback={<p className="text-center text-sm text-gray-400">Loading…</p>}>
-          <ResetPasswordForm />
-        </Suspense>
-      </div>
-    </div>
+    <AuthLayout>
+      <Suspense fallback={<p className="text-center text-sm text-gray-400">Loading…</p>}>
+        <ResetPasswordForm />
+      </Suspense>
+    </AuthLayout>
   );
 }

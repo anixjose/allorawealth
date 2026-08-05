@@ -81,7 +81,7 @@ function ChangePasswordForm() {
             />
           </FormField>
           {error && <p className="text-sm text-red-600">{error}</p>}
-          {success && <p className="text-sm text-green-700">Password changed successfully.</p>}
+          {success && <p className="text-sm text-emerald-deep">Password changed successfully.</p>}
           <Button type="submit" disabled={loading} className="w-full">
             {loading ? 'Changing…' : 'Change password'}
           </Button>

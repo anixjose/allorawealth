@@ -1,11 +1,11 @@
 type Tone = 'green' | 'amber' | 'red' | 'gray' | 'blue';
 
 const toneClasses: Record<Tone, string> = {
-  green: 'bg-green-50 text-green-700 ring-green-600/20',
+  green: 'bg-success-bg text-emerald-deep ring-emerald-deep/20',
   amber: 'bg-amber-50 text-amber-700 ring-amber-600/20',
   red: 'bg-red-50 text-red-700 ring-red-600/20',
   gray: 'bg-gray-50 text-gray-600 ring-gray-500/20',
-  blue: 'bg-blue-50 text-blue-700 ring-blue-600/20',
+  blue: 'bg-brand-50 text-royal-blue ring-royal-blue/20',
 };
 
 const STATUS_TONE: Record<string, Tone> = {
