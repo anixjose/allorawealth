@@ -465,6 +465,59 @@ enum AccountStatus {
   INACTIVE
 }
 
+/// Schedule III (Division I), Companies Act 2013 — full set of sub-heads, shown regardless
+/// of whether any account/balance exists for a given head (Schedule III's own allowance to
+/// omit inapplicable items is deliberately NOT used here, per the platform owner's request
+/// that every statutory line always be visible). Excludes only concepts this ledger has no
+/// underlying data model for at all: Exceptional/Extraordinary items, discontinued
+/// operations, and Earnings Per Share (which requires a share-count/face-value model this
+/// system doesn't have).
+enum ScheduleIIIGroup {
+  // Equity
+  SHARE_CAPITAL
+  RESERVES_AND_SURPLUS
+  SHARE_APPLICATION_MONEY
+  // Non-current liabilities
+  LONG_TERM_BORROWINGS
+  DEFERRED_TAX_LIABILITIES
+  OTHER_LONG_TERM_LIABILITIES
+  LONG_TERM_PROVISIONS
+  // Current liabilities
+  SHORT_TERM_BORROWINGS
+  TRADE_PAYABLES
+  OTHER_CURRENT_LIABILITIES
+  SHORT_TERM_PROVISIONS
+  // Non-current assets
+  TANGIBLE_ASSETS
+  INTANGIBLE_ASSETS
+  CAPITAL_WORK_IN_PROGRESS
+  INTANGIBLE_ASSETS_UNDER_DEVELOPMENT
+  NON_CURRENT_INVESTMENTS
+  DEFERRED_TAX_ASSETS
+  LONG_TERM_LOANS_AND_ADVANCES
+  OTHER_NON_CURRENT_ASSETS
+  // Current assets
+  CURRENT_INVESTMENTS
+  INVENTORIES
+  TRADE_RECEIVABLES
+  CASH_AND_CASH_EQUIVALENTS
+  SHORT_TERM_LOANS_AND_ADVANCES
+  OTHER_CURRENT_ASSETS
+  // Profit & Loss: revenue and expenses
+  REVENUE_FROM_OPERATIONS
+  OTHER_INCOME
+  COST_OF_MATERIALS_CONSUMED
+  PURCHASES_OF_STOCK_IN_TRADE
+  CHANGES_IN_INVENTORIES
+  EMPLOYEE_BENEFIT_EXPENSE
+  FINANCE_COSTS
+  DEPRECIATION_AND_AMORTIZATION_EXPENSE
+  OTHER_EXPENSES
+  // Profit & Loss: tax
+  CURRENT_TAX_EXPENSE
+  DEFERRED_TAX_EXPENSE
+}
+
 model Account {
   id             String   @id @default(uuid())
   accountCode    String   @unique @map("account_code")
@@ -473,6 +526,7 @@ model Account {
   parentAccountId String?  @map("parent_account_id")
   currency       String   @default("INR")
   status         AccountStatus @default(ACTIVE)
+  scheduleIiiGroup ScheduleIIIGroup @map("schedule_iii_group")
   createdAt      DateTime @default(now()) @map("created_at")
 
   parentAccount Account?  @relation("AccountHierarchy", fields: [parentAccountId], references: [id])

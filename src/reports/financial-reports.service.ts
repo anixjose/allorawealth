@@ -1,7 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { AccountType, ScheduleIIIGroup } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toMoney, sumMoney, ZERO, formatMoney, Money } from '../common/money';
 import { CONTROL_ACCOUNT_CODES } from '../reconciliation/reconciliation.service';
+import { SCHEDULE_III_GROUP_LABELS } from './schedule-iii';
 import {
   glBalancesByInvestor,
   walletLiabilitySubledger,
@@ -10,6 +12,32 @@ import {
 } from './subledger-balances.util';
 
 const DEBIT_NORMAL_TYPES = new Set(['ASSET', 'EXPENSE']);
+
+/**
+ * Cash Flow Statement (direct method, AS-3) activity classification for this platform's
+ * journal transaction types. Only transaction types that actually post to a Cash and Cash
+ * Equivalents account produce a cash flow at all (e.g. principal repayment never touches
+ * Bank Account in this ledger today — it's a reclassification between two payable accounts
+ * — so it never appears here, which is correct: a cash flow statement only reflects real
+ * cash movements).
+ *
+ * Policy (documented, not something this ledger can infer on its own): this platform lends
+ * investor funds to opportunities and collects repayments — functionally an NBFC/lending
+ * business — so ROI collected from borrowers is Operating (the core business), while
+ * investor deposits/withdrawals are Financing (investors are this fund's capital providers,
+ * the same way customer deposits are financing activities for a deposit-taking institution).
+ * No Investing activity exists yet in this ledger (no fixed-asset purchases are posted).
+ */
+const CASH_FLOW_OPERATING_TYPES = new Set(['ROI_RECEIPT']);
+const CASH_FLOW_FINANCING_TYPES = new Set(['DEPOSIT', 'WITHDRAWAL']);
+const CASH_FLOW_INVESTING_TYPES = new Set<string>([]);
+
+interface LeafAccountBalance {
+  accountCode: string;
+  accountName: string;
+  scheduleIiiGroup: ScheduleIIIGroup;
+  balance: Money;
+}
 
 /**
  * The blueprint's "Financial reports" set (§31): Trial Balance, General
@@ -67,43 +95,198 @@ export class FinancialReportsService {
     return this.accountLedger('1010');
   }
 
+  /**
+   * Statement of Profit and Loss per Schedule III (Division I), Companies Act 2013 — every
+   * line always shown, even with a zero balance and no accounts (per the platform owner's
+   * request to display the full statutory structure regardless of whether an amount exists).
+   * Tax Expense (Current + Deferred) is a real, separately-summed section — if nothing is
+   * ever posted to those accounts it's simply zero, rather than being hardcoded.
+   */
   async profitAndLoss() {
-    const [incomeAccounts, expenseAccounts] = await Promise.all([
-      this.accountBalancesByType('INCOME'),
-      this.accountBalancesByType('EXPENSE'),
+    const [incomeRows, expenseRows] = await Promise.all([
+      this.leafAccountBalancesByType('INCOME'),
+      this.leafAccountBalancesByType('EXPENSE'),
     ]);
 
-    const totalIncome = sumMoney(incomeAccounts.map((a) => a.balance));
-    const totalExpense = sumMoney(expenseAccounts.map((a) => a.balance));
+    const revenueFromOperations = this.groupByScheduleIII(incomeRows, ['REVENUE_FROM_OPERATIONS']);
+    const otherIncome = this.groupByScheduleIII(incomeRows, ['OTHER_INCOME']);
+    const totalRevenue = sumMoney([revenueFromOperations, otherIncome].map((s) => toMoney(s.total)));
+
+    const costOfMaterialsConsumed = this.groupByScheduleIII(expenseRows, ['COST_OF_MATERIALS_CONSUMED']);
+    const purchasesOfStockInTrade = this.groupByScheduleIII(expenseRows, ['PURCHASES_OF_STOCK_IN_TRADE']);
+    const changesInInventories = this.groupByScheduleIII(expenseRows, ['CHANGES_IN_INVENTORIES']);
+    const employeeBenefitExpense = this.groupByScheduleIII(expenseRows, ['EMPLOYEE_BENEFIT_EXPENSE']);
+    const financeCosts = this.groupByScheduleIII(expenseRows, ['FINANCE_COSTS']);
+    const depreciationAndAmortization = this.groupByScheduleIII(expenseRows, ['DEPRECIATION_AND_AMORTIZATION_EXPENSE']);
+    const otherExpenses = this.groupByScheduleIII(expenseRows, ['OTHER_EXPENSES']);
+    const totalExpenses = sumMoney(
+      [
+        costOfMaterialsConsumed,
+        purchasesOfStockInTrade,
+        changesInInventories,
+        employeeBenefitExpense,
+        financeCosts,
+        depreciationAndAmortization,
+        otherExpenses,
+      ].map((s) => toMoney(s.total)),
+    );
+
+    const profitBeforeTax = totalRevenue.minus(totalExpenses);
+
+    const currentTax = this.groupByScheduleIII(expenseRows, ['CURRENT_TAX_EXPENSE']);
+    const deferredTax = this.groupByScheduleIII(expenseRows, ['DEFERRED_TAX_EXPENSE']);
+    const totalTax = sumMoney([currentTax, deferredTax].map((s) => toMoney(s.total)));
+    const profitForThePeriod = profitBeforeTax.minus(totalTax);
 
     return {
-      income: incomeAccounts.map((a) => ({ ...a, balance: formatMoney(a.balance) })),
-      expense: expenseAccounts.map((a) => ({ ...a, balance: formatMoney(a.balance) })),
-      totalIncome: formatMoney(totalIncome),
-      totalExpense: formatMoney(totalExpense),
-      netProfit: formatMoney(totalIncome.minus(totalExpense)),
+      revenueFromOperations,
+      otherIncome,
+      totalRevenue: formatMoney(totalRevenue),
+      costOfMaterialsConsumed,
+      purchasesOfStockInTrade,
+      changesInInventories,
+      employeeBenefitExpense,
+      financeCosts,
+      depreciationAndAmortization,
+      otherExpenses,
+      totalExpenses: formatMoney(totalExpenses),
+      profitBeforeTax: formatMoney(profitBeforeTax),
+      currentTax,
+      deferredTax,
+      totalTax: formatMoney(totalTax),
+      profitForThePeriod: formatMoney(profitForThePeriod),
     };
   }
 
+  /**
+   * Balance Sheet per Schedule III (Division I) vertical format — Equity and Liabilities,
+   * then Assets. Every sub-head is always shown, even with zero accounts/balance.
+   */
   async balanceSheet() {
-    const [assets, liabilities, equity] = await Promise.all([
-      this.accountBalancesByType('ASSET'),
-      this.accountBalancesByType('LIABILITY'),
-      this.accountBalancesByType('EQUITY'),
+    const [assetRows, liabilityRows, equityRows] = await Promise.all([
+      this.leafAccountBalancesByType('ASSET'),
+      this.leafAccountBalancesByType('LIABILITY'),
+      this.leafAccountBalancesByType('EQUITY'),
     ]);
 
-    const totalAssets = sumMoney(assets.map((a) => a.balance));
-    const totalLiabilities = sumMoney(liabilities.map((a) => a.balance));
-    const totalEquity = sumMoney(equity.map((a) => a.balance));
+    const shareholdersFunds = this.groupByScheduleIII(equityRows, ['SHARE_CAPITAL', 'RESERVES_AND_SURPLUS']);
+    const shareApplicationMoney = this.groupByScheduleIII(equityRows, ['SHARE_APPLICATION_MONEY']);
+    const nonCurrentLiabilities = this.groupByScheduleIII(liabilityRows, [
+      'LONG_TERM_BORROWINGS',
+      'DEFERRED_TAX_LIABILITIES',
+      'OTHER_LONG_TERM_LIABILITIES',
+      'LONG_TERM_PROVISIONS',
+    ]);
+    const currentLiabilities = this.groupByScheduleIII(liabilityRows, [
+      'SHORT_TERM_BORROWINGS',
+      'TRADE_PAYABLES',
+      'OTHER_CURRENT_LIABILITIES',
+      'SHORT_TERM_PROVISIONS',
+    ]);
+    const nonCurrentAssets = this.groupByScheduleIII(assetRows, [
+      'TANGIBLE_ASSETS',
+      'INTANGIBLE_ASSETS',
+      'CAPITAL_WORK_IN_PROGRESS',
+      'INTANGIBLE_ASSETS_UNDER_DEVELOPMENT',
+      'NON_CURRENT_INVESTMENTS',
+      'DEFERRED_TAX_ASSETS',
+      'LONG_TERM_LOANS_AND_ADVANCES',
+      'OTHER_NON_CURRENT_ASSETS',
+    ]);
+    const currentAssets = this.groupByScheduleIII(assetRows, [
+      'CURRENT_INVESTMENTS',
+      'INVENTORIES',
+      'TRADE_RECEIVABLES',
+      'CASH_AND_CASH_EQUIVALENTS',
+      'SHORT_TERM_LOANS_AND_ADVANCES',
+      'OTHER_CURRENT_ASSETS',
+    ]);
+
+    const totalEquityAndLiabilities = sumMoney(
+      [shareholdersFunds, shareApplicationMoney, nonCurrentLiabilities, currentLiabilities].map((s) => toMoney(s.total)),
+    );
+    const totalAssets = sumMoney([nonCurrentAssets, currentAssets].map((s) => toMoney(s.total)));
 
     return {
-      assets: assets.map((a) => ({ ...a, balance: formatMoney(a.balance) })),
-      liabilities: liabilities.map((a) => ({ ...a, balance: formatMoney(a.balance) })),
-      equity: equity.map((a) => ({ ...a, balance: formatMoney(a.balance) })),
-      totalAssets: formatMoney(totalAssets),
-      totalLiabilities: formatMoney(totalLiabilities),
-      totalEquity: formatMoney(totalEquity),
-      balanced: totalAssets.equals(totalLiabilities.plus(totalEquity)),
+      equityAndLiabilities: {
+        shareholdersFunds,
+        shareApplicationMoney,
+        nonCurrentLiabilities,
+        currentLiabilities,
+        total: formatMoney(totalEquityAndLiabilities),
+      },
+      assets: {
+        nonCurrentAssets,
+        currentAssets,
+        total: formatMoney(totalAssets),
+      },
+      balanced: totalEquityAndLiabilities.equals(totalAssets),
+    };
+  }
+
+  /**
+   * Cash Flow Statement (direct method) — every posted journal line that touches a Cash and
+   * Cash Equivalents account, grouped by transaction type and classified into Operating,
+   * Investing, and Financing activities (see the classification constants above for the
+   * documented policy). "Since inception" convention matching the rest of this report suite
+   * (no date-range filtering): cash at the beginning is zero, cash at the end is the net
+   * increase in cash. `reconciled` cross-checks that figure against the Cash and Cash
+   * Equivalents accounts' actual ledger balance — if they ever diverge, it means a new
+   * transaction type started touching cash without being classified here.
+   */
+  async cashFlowStatement() {
+    const cashAccounts = await this.prisma.account.findMany({
+      where: { scheduleIiiGroup: 'CASH_AND_CASH_EQUIVALENTS', status: 'ACTIVE', childAccounts: { none: {} } },
+      select: { id: true },
+    });
+    const cashAccountIds = cashAccounts.map((a) => a.id);
+
+    const lines = await this.prisma.journalLine.findMany({
+      where: { accountId: { in: cashAccountIds }, journalEntry: { status: 'POSTED' } },
+      select: { debit: true, credit: true, journalEntry: { select: { transactionType: true } } },
+    });
+
+    const netByType = new Map<string, Money>();
+    for (const line of lines) {
+      const type = line.journalEntry.transactionType;
+      // Cash is debit-normal: a debit is cash received, a credit is cash paid out.
+      const net = toMoney(line.debit).minus(line.credit);
+      netByType.set(type, (netByType.get(type) ?? ZERO).plus(net));
+    }
+
+    const knownTypes = new Set([...CASH_FLOW_OPERATING_TYPES, ...CASH_FLOW_INVESTING_TYPES, ...CASH_FLOW_FINANCING_TYPES]);
+    const unclassifiedTypes = new Set(Array.from(netByType.keys()).filter((t) => !knownTypes.has(t)));
+
+    const buildActivity = (types: Set<string>, label: string) => {
+      const items = Array.from(netByType.entries())
+        .filter(([type]) => types.has(type))
+        .map(([transactionType, amount]) => ({ transactionType, amount: formatMoney(amount) }));
+      return { label, items, total: formatMoney(sumMoney(items.map((i) => toMoney(i.amount)))) };
+    };
+
+    const operatingActivities = buildActivity(CASH_FLOW_OPERATING_TYPES, 'Operating Activities');
+    const investingActivities = buildActivity(CASH_FLOW_INVESTING_TYPES, 'Investing Activities');
+    const financingActivities = buildActivity(CASH_FLOW_FINANCING_TYPES, 'Financing Activities');
+    const unclassifiedActivities = buildActivity(unclassifiedTypes, 'Unclassified Activities');
+
+    const netIncreaseInCash = sumMoney(
+      [operatingActivities, investingActivities, financingActivities, unclassifiedActivities].map((a) => toMoney(a.total)),
+    );
+
+    const assetRows = await this.leafAccountBalancesByType('ASSET');
+    const actualCashBalance = sumMoney(
+      assetRows.filter((r) => r.scheduleIiiGroup === 'CASH_AND_CASH_EQUIVALENTS').map((r) => r.balance),
+    );
+
+    return {
+      operatingActivities,
+      investingActivities,
+      financingActivities,
+      unclassifiedActivities,
+      netIncreaseInCash: formatMoney(netIncreaseInCash),
+      cashAtBeginning: formatMoney(ZERO),
+      cashAtEnd: formatMoney(netIncreaseInCash),
+      reconciled: netIncreaseInCash.equals(actualCashBalance),
     };
   }
 
@@ -218,8 +401,17 @@ export class FinancialReportsService {
     return { rows };
   }
 
-  private async accountBalancesByType(accountType: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE') {
-    const accounts = await this.prisma.account.findMany({ where: { accountType }, orderBy: { accountCode: 'asc' } });
+  /**
+   * Leaf accounts only (no children) — header/rollup accounts like "1000 ASSETS" never
+   * receive postings directly. Deactivated accounts are excluded from these statutory
+   * reports entirely (an account can only be deactivated once it has no transactions, so
+   * dropping it here never hides a real balance).
+   */
+  private async leafAccountBalancesByType(accountType: AccountType): Promise<LeafAccountBalance[]> {
+    const accounts = await this.prisma.account.findMany({
+      where: { accountType, status: 'ACTIVE', childAccounts: { none: {} } },
+      orderBy: { accountCode: 'asc' },
+    });
     const grouped = await this.prisma.journalLine.groupBy({
       by: ['accountId'],
       where: { accountId: { in: accounts.map((a) => a.id) }, journalEntry: { status: 'POSTED' } },
@@ -233,8 +425,28 @@ export class FinancialReportsService {
       const debit = toMoney(sums?._sum.debit ?? 0);
       const credit = toMoney(sums?._sum.credit ?? 0);
       const balance = normalDebit ? debit.minus(credit) : credit.minus(debit);
-      return { accountCode: account.accountCode, accountName: account.accountName, balance };
+      return {
+        accountCode: account.accountCode,
+        accountName: account.accountName,
+        scheduleIiiGroup: account.scheduleIiiGroup,
+        balance,
+      };
     });
+  }
+
+  /** Builds one Schedule III section (e.g. "Current Liabilities") from its constituent groups — every group is always shown, even with no accounts/zero balance. */
+  private groupByScheduleIII(rows: LeafAccountBalance[], groups: ScheduleIIIGroup[]) {
+    const items = groups.map((group) => {
+      const accounts = rows.filter((r) => r.scheduleIiiGroup === group);
+      return {
+        group,
+        label: SCHEDULE_III_GROUP_LABELS[group],
+        accounts: accounts.map((a) => ({ accountCode: a.accountCode, accountName: a.accountName, balance: formatMoney(a.balance) })),
+        total: formatMoney(sumMoney(accounts.map((a) => a.balance))),
+      };
+    });
+
+    return { items, total: formatMoney(sumMoney(items.map((i) => toMoney(i.total)))) };
   }
 
   private async accountLedger(accountCode: string) {

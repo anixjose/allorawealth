@@ -32,6 +32,11 @@ export class FinancialReportsController {
     return this.financialReportsService.balanceSheet();
   }
 
+  @Get('cash-flow')
+  cashFlowStatement() {
+    return this.financialReportsService.cashFlowStatement();
+  }
+
   @Get('cash-book')
   cashBook() {
     return this.financialReportsService.cashBook();

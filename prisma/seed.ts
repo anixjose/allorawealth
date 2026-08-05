@@ -1,40 +1,136 @@
-import { PrismaClient, AccountType } from '@prisma/client';
+import { PrismaClient, AccountType, ScheduleIIIGroup } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
-// Chart of accounts — blueprint §12, exact codes.
+// Chart of accounts — blueprint §12, exact codes. scheduleIiiGroup classifies each account
+// per Schedule III (Division I), Companies Act 2013, matching the backfill in migration
+// 20260806120000_schedule_iii_classification.
 const CHART_OF_ACCOUNTS: Array<{
   code: string;
   name: string;
   type: AccountType;
   parentCode?: string;
+  scheduleIiiGroup: ScheduleIIIGroup;
 }> = [
-  { code: '1000', name: 'ASSETS', type: 'ASSET' },
-  { code: '1010', name: 'Bank Account', type: 'ASSET', parentCode: '1000' },
-  { code: '1020', name: 'Payment Gateway Receivable', type: 'ASSET', parentCode: '1000' },
-  { code: '1030', name: 'Investment Receivable', type: 'ASSET', parentCode: '1000' },
-  { code: '1040', name: 'Other Receivables', type: 'ASSET', parentCode: '1000' },
+  { code: '1000', name: 'ASSETS', type: 'ASSET', scheduleIiiGroup: 'OTHER_CURRENT_ASSETS' },
+  { code: '1010', name: 'Bank Account', type: 'ASSET', parentCode: '1000', scheduleIiiGroup: 'CASH_AND_CASH_EQUIVALENTS' },
+  { code: '1020', name: 'Payment Gateway Receivable', type: 'ASSET', parentCode: '1000', scheduleIiiGroup: 'OTHER_CURRENT_ASSETS' },
+  { code: '1030', name: 'Investment Receivable', type: 'ASSET', parentCode: '1000', scheduleIiiGroup: 'OTHER_CURRENT_ASSETS' },
+  { code: '1040', name: 'Other Receivables', type: 'ASSET', parentCode: '1000', scheduleIiiGroup: 'OTHER_CURRENT_ASSETS' },
+  // Non-current assets — Schedule III (Division I) full coverage.
+  { code: '1050', name: 'Fixed Assets', type: 'ASSET', parentCode: '1000', scheduleIiiGroup: 'OTHER_NON_CURRENT_ASSETS' },
+  { code: '1051', name: 'Tangible Assets', type: 'ASSET', parentCode: '1050', scheduleIiiGroup: 'TANGIBLE_ASSETS' },
+  { code: '1052', name: 'Intangible Assets', type: 'ASSET', parentCode: '1050', scheduleIiiGroup: 'INTANGIBLE_ASSETS' },
+  { code: '1053', name: 'Capital Work-in-Progress', type: 'ASSET', parentCode: '1050', scheduleIiiGroup: 'CAPITAL_WORK_IN_PROGRESS' },
+  {
+    code: '1054',
+    name: 'Intangible Assets under Development',
+    type: 'ASSET',
+    parentCode: '1050',
+    scheduleIiiGroup: 'INTANGIBLE_ASSETS_UNDER_DEVELOPMENT',
+  },
+  { code: '1060', name: 'Non-current Investments', type: 'ASSET', parentCode: '1000', scheduleIiiGroup: 'NON_CURRENT_INVESTMENTS' },
+  { code: '1070', name: 'Deferred Tax Assets (Net)', type: 'ASSET', parentCode: '1000', scheduleIiiGroup: 'DEFERRED_TAX_ASSETS' },
+  {
+    code: '1080',
+    name: 'Long-term Loans and Advances',
+    type: 'ASSET',
+    parentCode: '1000',
+    scheduleIiiGroup: 'LONG_TERM_LOANS_AND_ADVANCES',
+  },
+  { code: '1090', name: 'Other Non-current Assets', type: 'ASSET', parentCode: '1000', scheduleIiiGroup: 'OTHER_NON_CURRENT_ASSETS' },
+  // Current assets.
+  { code: '1100', name: 'Current Investments', type: 'ASSET', parentCode: '1000', scheduleIiiGroup: 'CURRENT_INVESTMENTS' },
+  { code: '1110', name: 'Inventories', type: 'ASSET', parentCode: '1000', scheduleIiiGroup: 'INVENTORIES' },
+  { code: '1120', name: 'Trade Receivables', type: 'ASSET', parentCode: '1000', scheduleIiiGroup: 'TRADE_RECEIVABLES' },
+  {
+    code: '1130',
+    name: 'Short-term Loans and Advances',
+    type: 'ASSET',
+    parentCode: '1000',
+    scheduleIiiGroup: 'SHORT_TERM_LOANS_AND_ADVANCES',
+  },
 
-  { code: '2000', name: 'LIABILITIES', type: 'LIABILITY' },
-  { code: '2010', name: 'Investor Wallet Liability', type: 'LIABILITY', parentCode: '2000' },
-  { code: '2020', name: 'Investor Investment Payable', type: 'LIABILITY', parentCode: '2000' },
-  { code: '2030', name: 'Investor ROI Payable', type: 'LIABILITY', parentCode: '2000' },
-  { code: '2040', name: 'Investor Withdrawal Payable', type: 'LIABILITY', parentCode: '2000' },
+  { code: '2000', name: 'LIABILITIES', type: 'LIABILITY', scheduleIiiGroup: 'OTHER_CURRENT_LIABILITIES' },
+  { code: '2010', name: 'Investor Wallet Liability', type: 'LIABILITY', parentCode: '2000', scheduleIiiGroup: 'OTHER_CURRENT_LIABILITIES' },
+  { code: '2020', name: 'Investor Investment Payable', type: 'LIABILITY', parentCode: '2000', scheduleIiiGroup: 'OTHER_CURRENT_LIABILITIES' },
+  { code: '2030', name: 'Investor ROI Payable', type: 'LIABILITY', parentCode: '2000', scheduleIiiGroup: 'OTHER_CURRENT_LIABILITIES' },
+  { code: '2040', name: 'Investor Withdrawal Payable', type: 'LIABILITY', parentCode: '2000', scheduleIiiGroup: 'OTHER_CURRENT_LIABILITIES' },
+  // Non-current liabilities — Schedule III (Division I) full coverage.
+  { code: '2050', name: 'Long-term Borrowings', type: 'LIABILITY', parentCode: '2000', scheduleIiiGroup: 'LONG_TERM_BORROWINGS' },
+  {
+    code: '2060',
+    name: 'Deferred Tax Liabilities (Net)',
+    type: 'LIABILITY',
+    parentCode: '2000',
+    scheduleIiiGroup: 'DEFERRED_TAX_LIABILITIES',
+  },
+  {
+    code: '2070',
+    name: 'Other Long-term Liabilities',
+    type: 'LIABILITY',
+    parentCode: '2000',
+    scheduleIiiGroup: 'OTHER_LONG_TERM_LIABILITIES',
+  },
+  { code: '2080', name: 'Long-term Provisions', type: 'LIABILITY', parentCode: '2000', scheduleIiiGroup: 'LONG_TERM_PROVISIONS' },
+  // Current liabilities.
+  { code: '2090', name: 'Short-term Borrowings', type: 'LIABILITY', parentCode: '2000', scheduleIiiGroup: 'SHORT_TERM_BORROWINGS' },
+  { code: '2100', name: 'Trade Payables', type: 'LIABILITY', parentCode: '2000', scheduleIiiGroup: 'TRADE_PAYABLES' },
+  { code: '2110', name: 'Short-term Provisions', type: 'LIABILITY', parentCode: '2000', scheduleIiiGroup: 'SHORT_TERM_PROVISIONS' },
 
-  { code: '3000', name: 'EQUITY', type: 'EQUITY' },
-  { code: '3010', name: 'Share Capital', type: 'EQUITY', parentCode: '3000' },
-  { code: '3020', name: 'Retained Earnings', type: 'EQUITY', parentCode: '3000' },
+  { code: '3000', name: 'EQUITY', type: 'EQUITY', scheduleIiiGroup: 'RESERVES_AND_SURPLUS' },
+  { code: '3010', name: 'Share Capital', type: 'EQUITY', parentCode: '3000', scheduleIiiGroup: 'SHARE_CAPITAL' },
+  { code: '3020', name: 'Retained Earnings', type: 'EQUITY', parentCode: '3000', scheduleIiiGroup: 'RESERVES_AND_SURPLUS' },
+  {
+    code: '3030',
+    name: 'Share Application Money Pending Allotment',
+    type: 'EQUITY',
+    parentCode: '3000',
+    scheduleIiiGroup: 'SHARE_APPLICATION_MONEY',
+  },
 
-  { code: '4000', name: 'INCOME', type: 'INCOME' },
-  { code: '4010', name: 'Platform Fees', type: 'INCOME', parentCode: '4000' },
-  { code: '4020', name: 'Management Fees', type: 'INCOME', parentCode: '4000' },
-  { code: '4030', name: 'Transaction Fees', type: 'INCOME', parentCode: '4000' },
+  { code: '4000', name: 'INCOME', type: 'INCOME', scheduleIiiGroup: 'OTHER_INCOME' },
+  { code: '4010', name: 'Platform Fees', type: 'INCOME', parentCode: '4000', scheduleIiiGroup: 'REVENUE_FROM_OPERATIONS' },
+  { code: '4020', name: 'Management Fees', type: 'INCOME', parentCode: '4000', scheduleIiiGroup: 'REVENUE_FROM_OPERATIONS' },
+  { code: '4030', name: 'Transaction Fees', type: 'INCOME', parentCode: '4000', scheduleIiiGroup: 'REVENUE_FROM_OPERATIONS' },
 
-  { code: '5000', name: 'EXPENSES', type: 'EXPENSE' },
-  { code: '5010', name: 'Bank Charges', type: 'EXPENSE', parentCode: '5000' },
-  { code: '5020', name: 'Payment Gateway Charges', type: 'EXPENSE', parentCode: '5000' },
-  { code: '5030', name: 'Operating Expenses', type: 'EXPENSE', parentCode: '5000' },
+  { code: '5000', name: 'EXPENSES', type: 'EXPENSE', scheduleIiiGroup: 'OTHER_EXPENSES' },
+  { code: '5010', name: 'Bank Charges', type: 'EXPENSE', parentCode: '5000', scheduleIiiGroup: 'OTHER_EXPENSES' },
+  { code: '5020', name: 'Payment Gateway Charges', type: 'EXPENSE', parentCode: '5000', scheduleIiiGroup: 'OTHER_EXPENSES' },
+  { code: '5030', name: 'Operating Expenses', type: 'EXPENSE', parentCode: '5000', scheduleIiiGroup: 'OTHER_EXPENSES' },
+  // Schedule III (Division I) full P&L expense coverage.
+  {
+    code: '5040',
+    name: 'Cost of Materials Consumed',
+    type: 'EXPENSE',
+    parentCode: '5000',
+    scheduleIiiGroup: 'COST_OF_MATERIALS_CONSUMED',
+  },
+  {
+    code: '5050',
+    name: 'Purchases of Stock-in-Trade',
+    type: 'EXPENSE',
+    parentCode: '5000',
+    scheduleIiiGroup: 'PURCHASES_OF_STOCK_IN_TRADE',
+  },
+  {
+    code: '5060',
+    name: 'Changes in Inventories of Finished Goods, Work-in-Progress and Stock-in-Trade',
+    type: 'EXPENSE',
+    parentCode: '5000',
+    scheduleIiiGroup: 'CHANGES_IN_INVENTORIES',
+  },
+  { code: '5070', name: 'Employee Benefit Expense', type: 'EXPENSE', parentCode: '5000', scheduleIiiGroup: 'EMPLOYEE_BENEFIT_EXPENSE' },
+  {
+    code: '5080',
+    name: 'Depreciation and Amortization Expense',
+    type: 'EXPENSE',
+    parentCode: '5000',
+    scheduleIiiGroup: 'DEPRECIATION_AND_AMORTIZATION_EXPENSE',
+  },
+  { code: '5090', name: 'Current Tax', type: 'EXPENSE', parentCode: '5000', scheduleIiiGroup: 'CURRENT_TAX_EXPENSE' },
+  { code: '5100', name: 'Deferred Tax', type: 'EXPENSE', parentCode: '5000', scheduleIiiGroup: 'DEFERRED_TAX_EXPENSE' },
 ];
 
 // Roles — blueprint §2.
@@ -64,6 +160,7 @@ async function seedChartOfAccounts() {
         accountType: acc.type,
         parentAccountId,
         currency: 'INR',
+        scheduleIiiGroup: acc.scheduleIiiGroup,
       },
     });
     codeToId.set(acc.code, created.id);

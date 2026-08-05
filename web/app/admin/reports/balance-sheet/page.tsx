@@ -1,50 +1,11 @@
 'use client';
 
-import Link from 'next/link';
 import { RequireRole } from '@/components/require-role';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, Thead, Tbody, Tr, Th, Td, EmptyState } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { ScheduleIIISubsection } from '@/components/schedule-iii';
 import { useBalanceSheet } from '@/lib/hooks';
 import { formatMoney } from '@/lib/format-money';
-import type { AccountBalanceRow } from '@/lib/types';
-
-function Group({ title, rows, total }: { title: string; rows: AccountBalanceRow[]; total: string }) {
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle>{title}</CardTitle>
-        <span className="text-sm font-semibold text-gray-900">{formatMoney(total)}</span>
-      </CardHeader>
-      <CardContent>
-        {rows.length === 0 ? (
-          <EmptyState message="No accounts." />
-        ) : (
-          <Table>
-            <Thead>
-              <Tr><Th>Account</Th><Th>Balance</Th></Tr>
-            </Thead>
-            <Tbody>
-              {rows.map((a) => (
-                <Tr key={a.accountCode}>
-                  <Td>
-                    <Link
-                      href={`/admin/reports/general-ledger?account=${a.accountCode}`}
-                      className="font-medium text-brand-600 hover:text-brand-700 hover:underline"
-                    >
-                      {a.accountName}
-                    </Link>
-                  </Td>
-                  <Td>{formatMoney(a.balance)}</Td>
-                </Tr>
-              ))}
-            </Tbody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
 
 function BalanceSheetContent() {
   const { data, isLoading } = useBalanceSheet();
@@ -52,17 +13,50 @@ function BalanceSheetContent() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-gray-900">Balance Sheet</h1>
+        <div>
+          <h1 className="text-xl font-semibold text-gray-900">Balance Sheet</h1>
+          <p className="mt-1 text-sm text-gray-500">Schedule III (Division I), Companies Act 2013 — vertical format</p>
+        </div>
         {data && <Badge tone={data.balanced ? 'green' : 'red'}>{data.balanced ? '✓ BALANCED' : '⚠ OUT OF BALANCE'}</Badge>}
       </div>
       {isLoading || !data ? (
         <p className="text-sm text-gray-400">Loading…</p>
       ) : (
-        <>
-          <Group title="Assets" rows={data.assets} total={data.totalAssets} />
-          <Group title="Liabilities" rows={data.liabilities} total={data.totalLiabilities} />
-          <Group title="Equity" rows={data.equity} total={data.totalEquity} />
-        </>
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>I. Equity and Liabilities</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <ScheduleIIISubsection number="1" title="Shareholders' Funds" section={data.equityAndLiabilities.shareholdersFunds} />
+              <ScheduleIIISubsection
+                number="2"
+                title="Share Application Money Pending Allotment"
+                section={data.equityAndLiabilities.shareApplicationMoney}
+              />
+              <ScheduleIIISubsection number="3" title="Non-Current Liabilities" section={data.equityAndLiabilities.nonCurrentLiabilities} />
+              <ScheduleIIISubsection number="4" title="Current Liabilities" section={data.equityAndLiabilities.currentLiabilities} />
+              <div className="flex items-center justify-between border-t border-gray-200 pt-3 text-base font-semibold text-gray-900">
+                <span>Total Equity and Liabilities</span>
+                <span>{formatMoney(data.equityAndLiabilities.total)}</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>II. Assets</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <ScheduleIIISubsection number="1" title="Non-Current Assets" section={data.assets.nonCurrentAssets} />
+              <ScheduleIIISubsection number="2" title="Current Assets" section={data.assets.currentAssets} />
+              <div className="flex items-center justify-between border-t border-gray-200 pt-3 text-base font-semibold text-gray-900">
+                <span>Total Assets</span>
+                <span>{formatMoney(data.assets.total)}</span>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );

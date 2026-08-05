@@ -17,6 +17,7 @@ import {
   FileBarChart,
   BookOpen,
   ShieldCheck,
+  Landmark,
   Menu,
   X,
   LogOut,
@@ -43,6 +44,7 @@ const adminLinks: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/admin/repayments', label: 'Repayments', icon: RefreshCw },
   { href: '/admin/reconciliation', label: 'Reconciliation', icon: Scale },
   { href: '/admin/reports', label: 'Reports', icon: FileBarChart },
+  { href: '/admin/finance', label: 'Finance', icon: Landmark },
   { href: '/admin/catalogue', label: 'Catalogue', icon: BookOpen },
   { href: '/admin/platform', label: 'Platform Admin', icon: ShieldCheck },
 ];

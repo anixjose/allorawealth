@@ -232,6 +232,15 @@ export function useCashBook() {
   });
 }
 
+export function useCashFlowStatement() {
+  const { accessToken } = useAuth();
+  return useQuery({
+    queryKey: ['reports', 'cash-flow'],
+    queryFn: () => api.getCashFlowStatement(accessToken!),
+    enabled: !!accessToken,
+  });
+}
+
 export function useInvestorLiabilities() {
   const { accessToken } = useAuth();
   return useQuery({

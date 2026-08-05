@@ -1,7 +1,10 @@
 import type {
   Account,
   AccountLedger,
+  AccountStatus,
+  AccountType,
   BalanceSheet,
+  CashFlowStatement,
   Deposit,
   DepositStatus,
   DisburseRepaymentsResult,
@@ -24,6 +27,7 @@ import type {
   RepaymentStatus,
   ReportsSummary,
   RoiStatementRow,
+  ScheduleIIIGroup,
   DeleteStaffUserResult,
   StaffUser,
   TrialBalance,
@@ -252,6 +256,8 @@ export const getGeneralLedger = (token: string, accountCode: string) =>
 export const getProfitAndLoss = (token: string) =>
   request<ProfitAndLoss>('/reports/financial/profit-and-loss', { token });
 export const getBalanceSheet = (token: string) => request<BalanceSheet>('/reports/financial/balance-sheet', { token });
+export const getCashFlowStatement = (token: string) =>
+  request<CashFlowStatement>('/reports/financial/cash-flow', { token });
 export const getCashBook = (token: string) => request<AccountLedger>('/reports/financial/cash-book', { token });
 export const getInvestorLiabilities = (token: string) =>
   request<{ rows: InvestorLiabilityRow[] }>('/reports/financial/investor-liabilities', { token });
@@ -272,8 +278,24 @@ export const getRepaymentStatement = (token: string, investorId: string) =>
 export const markInvestmentDefaulted = (token: string, investmentId: string, reason: string) =>
   request<Investment>(`/investments/${investmentId}/default`, { method: 'POST', token, body: { reason } });
 
-// ---- Accounts ----
+// ---- Accounts (Finance Module: chart of accounts) ----
 export const listAccounts = (token: string) => request<Account[]>('/accounts', { token });
+export const createAccount = (
+  token: string,
+  dto: {
+    accountCode: string;
+    accountName: string;
+    accountType: AccountType;
+    scheduleIiiGroup: ScheduleIIIGroup;
+    parentAccountId?: string;
+    currency?: string;
+  },
+) => request<Account>('/accounts', { method: 'POST', token, body: dto });
+export const updateAccount = (
+  token: string,
+  id: string,
+  dto: { accountName?: string; status?: AccountStatus; scheduleIiiGroup?: ScheduleIIIGroup },
+) => request<Account>(`/accounts/${id}`, { method: 'PATCH', token, body: dto });
 
 // ---- User categories (roles) ----
 export const listRoles = (token: string) => request<UserCategory[]>('/roles', { token });

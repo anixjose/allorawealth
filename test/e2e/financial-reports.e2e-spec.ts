@@ -102,12 +102,59 @@ describe('Financial / investor / management reports', () => {
     expect(trialBalance.body.balanced).toBe(true);
     expect(trialBalance.body.totalDebit).toBe(trialBalance.body.totalCredit);
 
-    // --- Balance sheet: assets == liabilities + equity ---
+    // --- Balance sheet: Schedule III (Division I) vertical format, assets == equity + liabilities ---
     const balanceSheet = await request(app.getHttpServer())
       .get('/reports/financial/balance-sheet')
       .set('Authorization', `Bearer ${financeToken}`)
       .expect(200);
     expect(balanceSheet.body.balanced).toBe(true);
+    expect(balanceSheet.body.equityAndLiabilities.total).toBe(balanceSheet.body.assets.total);
+
+    // Investor wallet/investment liabilities land under Current Liabilities > Other Current Liabilities.
+    const currentLiabilityItems = balanceSheet.body.equityAndLiabilities.currentLiabilities.items;
+    const otherCurrentLiabilities = currentLiabilityItems.find(
+      (i: { group: string }) => i.group === 'OTHER_CURRENT_LIABILITIES',
+    );
+    expect(otherCurrentLiabilities.accounts.some((a: { accountCode: string }) => a.accountCode === '2010')).toBe(true);
+    // Every Schedule III sub-head is always shown, even with a zero balance — Long-term
+    // Borrowings has a seeded placeholder account but nothing has ever been posted to it.
+    const longTermBorrowings = balanceSheet.body.equityAndLiabilities.nonCurrentLiabilities.items.find(
+      (i: { group: string }) => i.group === 'LONG_TERM_BORROWINGS',
+    );
+    expect(longTermBorrowings).toBeDefined();
+    expect(longTermBorrowings.total).toBe('0.00');
+
+    // The deposited cash lands under Current Assets > Cash and Cash Equivalents (Bank Account, 1010).
+    const currentAssetItems = balanceSheet.body.assets.currentAssets.items;
+    const cashAndCashEquivalents = currentAssetItems.find((i: { group: string }) => i.group === 'CASH_AND_CASH_EQUIVALENTS');
+    expect(cashAndCashEquivalents.accounts.some((a: { accountCode: string }) => a.accountCode === '1010')).toBe(true);
+
+    // --- Profit & Loss: Schedule III (Division I) structure; no tax is modeled anywhere in this ledger. ---
+    const profitAndLoss = await request(app.getHttpServer())
+      .get('/reports/financial/profit-and-loss')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .expect(200);
+    expect(profitAndLoss.body.profitForThePeriod).toBe(profitAndLoss.body.profitBeforeTax);
+    expect(typeof profitAndLoss.body.totalRevenue).toBe('string');
+    expect(typeof profitAndLoss.body.totalExpenses).toBe('string');
+    // Every Schedule III sub-head always appears, tax included, even though nothing is ever posted to it.
+    expect(profitAndLoss.body.currentTax.total).toBe('0.00');
+    expect(profitAndLoss.body.deferredTax.total).toBe('0.00');
+    expect(profitAndLoss.body.costOfMaterialsConsumed.items.length).toBeGreaterThan(0);
+
+    // --- Cash Flow Statement (direct method): reconciles to the actual cash balance, and this
+    // scenario's deposit (Financing) and ROI cash receipt (Operating) both appear. ---
+    const cashFlow = await request(app.getHttpServer())
+      .get('/reports/financial/cash-flow')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .expect(200);
+    expect(cashFlow.body.reconciled).toBe(true);
+    expect(
+      cashFlow.body.financingActivities.items.some((i: { transactionType: string }) => i.transactionType === 'DEPOSIT'),
+    ).toBe(true);
+    expect(
+      cashFlow.body.operatingActivities.items.some((i: { transactionType: string }) => i.transactionType === 'ROI_RECEIPT'),
+    ).toBe(true);
 
     // --- Cash book: Bank account ledger renders and produces an ending balance ---
     const cashBook = await request(app.getHttpServer())
@@ -116,6 +163,8 @@ describe('Financial / investor / management reports', () => {
       .expect(200);
     expect(cashBook.body.account.accountCode).toBe('1010');
     expect(typeof cashBook.body.endingBalance).toBe('string');
+    // 1010 is the only Cash and Cash Equivalents account seeded, so the two must agree exactly.
+    expect(cashFlow.body.cashAtEnd).toBe(cashBook.body.endingBalance);
 
     // --- Investor liabilities agrees with the wallet position's available balance ---
     const position = await request(app.getHttpServer())

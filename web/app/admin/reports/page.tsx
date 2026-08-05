@@ -12,6 +12,7 @@ const sections: { title: string; items: { href: string; label: string; descripti
       { href: '/admin/reports/general-ledger', label: 'General Ledger', description: 'Full posted transaction detail for one account, with running balance.' },
       { href: '/admin/reports/profit-and-loss', label: 'Profit & Loss', description: 'Income less expenses for the platform.' },
       { href: '/admin/reports/balance-sheet', label: 'Balance Sheet', description: 'Assets, liabilities, and equity as of now.' },
+      { href: '/admin/reports/cash-flow', label: 'Cash Flow Statement', description: 'Operating, investing, and financing cash flows (direct method).' },
       { href: '/admin/reports/cash-book', label: 'Cash / Bank', description: "The Bank account's own ledger (internal cash book — no external bank feed integrated)." },
       { href: '/admin/reports/investor-liabilities', label: 'Investor Liability Report', description: 'What the platform owes each investor: wallet, investment, and ROI payable.' },
       { href: '/admin/reports/investor-roi', label: 'Investor ROI Report', description: 'ROI accrued vs received per investor.' },
