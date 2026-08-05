@@ -1,0 +1,701 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Users & roles (blueprint §6)
+// ────────────────────────────────────────────────────────────────────────
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+model User {
+  id             String   @id @default(uuid())
+  // Sequential, human-readable identifier for internal staff (EMP-000001) — null for
+  // investor-only users, who are already identified by Investor.investorNumber instead.
+  employeeNumber String?  @unique @map("employee_number")
+  firstName      String   @map("first_name")
+  lastName       String   @map("last_name")
+  email          String   @unique
+  mobile         String?
+  passwordHash   String   @map("password_hash")
+  status         UserStatus @default(ACTIVE)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  userRoles       UserRole[]
+  investor        Investor?
+  auditLogs       AuditLog[]
+  verifiedDocs    KycDocument[]              @relation("VerifiedBy")
+  createdJournals JournalEntry[]             @relation("JournalCreatedBy")
+  approvedJournals JournalEntry[]            @relation("JournalApprovedBy")
+  requestedWithdrawals Withdrawal[]          @relation("WithdrawalRequestedBy")
+  approvedWithdrawals  Withdrawal[]          @relation("WithdrawalApprovedBy")
+  requestedDeposits Deposit[]                @relation("DepositRequestedBy")
+  approvedDeposits  Deposit[]                @relation("DepositApprovedBy")
+  recordedRepayments Repayment[]             @relation("RepaymentRecordedBy")
+  disbursedRepayments Repayment[]            @relation("RepaymentDisbursedBy")
+  approvedInvestors Investor[]               @relation("InvestorApprovedBy")
+  preparedReconciliations InvestorGlReconciliation[] @relation("ReconciliationPreparedBy")
+  reviewedReconciliations InvestorGlReconciliation[] @relation("ReconciliationReviewedBy")
+  passwordResetTokens PasswordResetToken[]
+
+  @@map("users")
+}
+
+// Forgot-password flow. We store a hash of the token (never the raw value) so a
+// database read alone can't be replayed as a valid reset link, same principle
+// as passwordHash on User. No mailer is integrated yet, so AuthService logs the
+// reset link instead of emailing it — see AuthService.forgotPassword.
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
+}
+
+model Role {
+  id          String @id @default(uuid())
+  name        String @unique
+  description String?
+  // Custom User Categories only (seeded roles are governed by fixed @Roles()
+  // decorators and leave this null). Shape: Record<"MODULE:VIEW", true>.
+  permissions Json?
+
+  userRoles UserRole[]
+
+  @@map("roles")
+}
+
+// Role names used by the app (seeded): INVESTOR, ADMIN, INVESTMENT_MANAGER,
+// FINANCE_OFFICER, COMPLIANCE_OFFICER, APPROVER, SUPER_ADMIN (blueprint §2)
+
+model UserRole {
+  id     String @id @default(uuid())
+  userId String @map("user_id")
+  roleId String @map("role_id")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@map("user_roles")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Investors & KYC (blueprint §7) — schema only, no verification workflow yet
+// ────────────────────────────────────────────────────────────────────────
+
+enum KycStatus {
+  NOT_STARTED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum AmlStatus {
+  NOT_SCREENED
+  CLEARED
+  FLAGGED
+}
+
+enum InvestorStatus {
+  PENDING_ACTIVATION
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum InvestorEntityType {
+  INDIVIDUAL
+  BUSINESS
+}
+
+model Investor {
+  id             String   @id @default(uuid())
+  userId         String   @unique @map("user_id")
+  investorNumber String   @unique @map("investor_number")
+  entityType     InvestorEntityType @default(INDIVIDUAL) @map("entity_type")
+  businessName   String?  @map("business_name")
+  registrationNumber String? @unique @map("registration_number")
+  dateOfBirth    DateTime? @map("date_of_birth")
+  nationality    String?
+  country        String?
+  address        String?
+  riskProfile    String?  @map("risk_profile")
+  kycStatus      KycStatus @default(NOT_STARTED) @map("kyc_status")
+  amlStatus      AmlStatus @default(NOT_SCREENED) @map("aml_status")
+  status         InvestorStatus @default(PENDING_ACTIVATION)
+  approvedAt     DateTime? @map("approved_at")
+  approvedById   String?  @map("approved_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  user           User @relation(fields: [userId], references: [id])
+  approvedBy     User? @relation("InvestorApprovedBy", fields: [approvedById], references: [id])
+  kycDocuments   KycDocument[]
+  wallet         Wallet?
+  investments    Investment[]
+  withdrawals    Withdrawal[]
+  deposits       Deposit[]
+  journalLines   JournalLine[]
+  reconciliationItems InvestorGlReconciliationItem[]
+
+  @@map("investors")
+}
+
+enum DocumentVerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  EXPIRED
+}
+
+model KycDocument {
+  id                 String   @id @default(uuid())
+  investorId         String   @map("investor_id")
+  documentType       String   @map("document_type")
+  documentNumber     String   @map("document_number")
+  fileReference      String   @map("file_reference")
+  issueDate          DateTime? @map("issue_date")
+  expiryDate         DateTime? @map("expiry_date")
+  verificationStatus DocumentVerificationStatus @default(PENDING) @map("verification_status")
+  verifiedById       String?  @map("verified_by")
+  verifiedAt         DateTime? @map("verified_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  investor   Investor @relation(fields: [investorId], references: [id])
+  verifiedBy User?    @relation("VerifiedBy", fields: [verifiedById], references: [id])
+
+  @@map("kyc_documents")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Wallet (blueprint §8) — wallet_transactions is the append-only projection;
+// wallets never carries a mutable balance column (blueprint §36).
+// ────────────────────────────────────────────────────────────────────────
+
+enum WalletStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+model Wallet {
+  id           String   @id @default(uuid())
+  investorId   String   @unique @map("investor_id")
+  walletNumber String   @unique @map("wallet_number")
+  currency     String   @default("INR")
+  status       WalletStatus @default(ACTIVE)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  investor     Investor @relation(fields: [investorId], references: [id])
+  transactions WalletTransaction[]
+
+  @@map("wallets")
+}
+
+enum WalletTransactionType {
+  DEPOSIT
+  INVESTMENT
+  ROI
+  PRINCIPAL_REPAYMENT
+  REFUND
+  WITHDRAWAL
+  FEE
+  REVERSAL
+  ADJUSTMENT
+}
+
+enum WalletTransactionDirection {
+  CREDIT
+  DEBIT
+}
+
+enum WalletTransactionStatus {
+  PENDING
+  POSTED
+  REVERSED
+  CANCELLED
+}
+
+model WalletTransaction {
+  id                String   @id @default(uuid())
+  walletId          String   @map("wallet_id")
+  transactionNumber String   @unique @map("transaction_number")
+  transactionType   WalletTransactionType @map("transaction_type")
+  direction         WalletTransactionDirection
+  amount            Decimal  @db.Decimal(18, 2)
+  currency          String
+  referenceType     String   @map("reference_type")
+  referenceId       String   @map("reference_id")
+  journalEntryId    String?  @map("journal_entry_id")
+  status            WalletTransactionStatus @default(PENDING)
+  createdAt         DateTime @default(now()) @map("created_at")
+  postedAt          DateTime? @map("posted_at")
+
+  wallet       Wallet        @relation(fields: [walletId], references: [id])
+  journalEntry JournalEntry? @relation(fields: [journalEntryId], references: [id])
+
+  @@index([walletId, status])
+  @@unique([referenceType, referenceId], name: "wallet_transactions_reference_unique")
+  @@map("wallet_transactions")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Investment products / opportunities / companies (blueprint §9–10)
+// ────────────────────────────────────────────────────────────────────────
+
+enum RoiType {
+  MONTHLY
+  QUARTERLY
+  BULLET
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model InvestmentProduct {
+  id             String   @id @default(uuid())
+  productCode    String   @unique @map("product_code")
+  name           String
+  description    String?
+  minimumAmount  Decimal  @db.Decimal(18, 2) @map("minimum_amount")
+  maximumAmount  Decimal? @db.Decimal(18, 2) @map("maximum_amount")
+  expectedRoi    Decimal  @db.Decimal(9, 4) @map("expected_roi")
+  roiType        RoiType  @map("roi_type")
+  tenureMonths   Int      @map("tenure_months")
+  currency       String   @default("INR")
+  riskLevel      String?  @map("risk_level")
+  status         ProductStatus @default(ACTIVE)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  opportunities InvestmentOpportunity[]
+
+  @@map("investment_products")
+}
+
+enum CompanyKycStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum CompanyStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+model InvestmentCompany {
+  id                 String   @id @default(uuid())
+  companyCode        String   @unique @map("company_code")
+  legalName          String   @map("legal_name")
+  registrationNumber String   @map("registration_number")
+  country            String?
+  address            String?
+  contactDetails     String?  @map("contact_details")
+  kycStatus          CompanyKycStatus @default(PENDING) @map("kyc_status")
+  status             CompanyStatus @default(ACTIVE)
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  opportunities InvestmentOpportunity[]
+
+  @@map("investment_companies")
+}
+
+enum OpportunityStatus {
+  DRAFT
+  OPEN
+  FULLY_FUNDED
+  CLOSED
+  CANCELLED
+}
+
+model InvestmentOpportunity {
+  id                String   @id @default(uuid())
+  productId         String   @map("product_id")
+  companyId         String   @map("company_id")
+  name              String
+  description       String?
+  targetAmount      Decimal  @db.Decimal(18, 2) @map("target_amount")
+  minimumInvestment Decimal  @db.Decimal(18, 2) @map("minimum_investment")
+  expectedRoi       Decimal  @db.Decimal(9, 4) @map("expected_roi")
+  startDate         DateTime @map("start_date")
+  maturityDate      DateTime @map("maturity_date")
+  status            OpportunityStatus @default(DRAFT)
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  product     InvestmentProduct  @relation(fields: [productId], references: [id])
+  company     InvestmentCompany  @relation(fields: [companyId], references: [id])
+  investments Investment[]
+
+  @@map("investment_opportunities")
+}
+
+enum InvestmentStatus {
+  ACTIVE
+  MATURED
+  CLOSED
+  DEFAULTED
+  WRITTEN_OFF
+}
+
+model Investment {
+  id               String   @id @default(uuid())
+  investmentNumber String   @unique @map("investment_number")
+  investorId       String   @map("investor_id")
+  opportunityId    String   @map("opportunity_id")
+  principalAmount  Decimal  @db.Decimal(18, 2) @map("principal_amount")
+  investmentDate   DateTime @map("investment_date")
+  maturityDate     DateTime @map("maturity_date")
+  expectedRoi      Decimal  @db.Decimal(9, 4) @map("expected_roi")
+  actualRoi        Decimal? @db.Decimal(9, 4) @map("actual_roi")
+  status           InvestmentStatus @default(ACTIVE)
+  // Status-only default marking (blueprint's Defaulted Investments report) — no journal/ledger entry;
+  // not a full default/write-off accounting treatment, which is a separate design question.
+  defaultedAt      DateTime? @map("defaulted_at")
+  defaultReason    String?  @map("default_reason")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  investor           Investor              @relation(fields: [investorId], references: [id])
+  opportunity        InvestmentOpportunity @relation(fields: [opportunityId], references: [id])
+  repaymentSchedules RepaymentSchedule[]
+  repayments         Repayment[]
+  journalLines       JournalLine[]
+
+  @@map("investments")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Repayments (blueprint §11)
+// ────────────────────────────────────────────────────────────────────────
+
+enum ScheduleStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+}
+
+model RepaymentSchedule {
+  id             String   @id @default(uuid())
+  investmentId   String   @map("investment_id")
+  dueDate        DateTime @map("due_date")
+  principalDue   Decimal  @db.Decimal(18, 2) @map("principal_due")
+  roiDue         Decimal  @db.Decimal(18, 2) @map("roi_due")
+  totalDue       Decimal  @db.Decimal(18, 2) @map("total_due")
+  status         ScheduleStatus @default(PENDING)
+  // Set once the ROI-due journal (Dr Investment Receivable / Cr Investor ROI Payable) has posted; guards against double-accrual.
+  roiAccruedAt   DateTime? @map("roi_accrued_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  investment Investment  @relation(fields: [investmentId], references: [id])
+  repayments Repayment[]
+
+  @@map("repayment_schedules")
+}
+
+// RECEIVED = money confirmed received from the investment (receivable cleared, if
+// applicable), not yet in the investor's wallet. DISBURSED = credited to the
+// investor's wallet and posted to their liability accounts. POSTED is a legacy
+// value from before this split; no longer written, kept only for old rows.
+enum RepaymentStatus {
+  POSTED
+  RECEIVED
+  DISBURSED
+  REVERSED
+}
+
+model Repayment {
+  id              String   @id @default(uuid())
+  investmentId    String   @map("investment_id")
+  scheduleId      String?  @map("schedule_id")
+  paymentDate     DateTime @map("payment_date")
+  principalAmount Decimal  @db.Decimal(18, 2) @default(0) @map("principal_amount")
+  roiAmount       Decimal  @db.Decimal(18, 2) @default(0) @map("roi_amount")
+  otherAmount     Decimal  @db.Decimal(18, 2) @default(0) @map("other_amount")
+  totalAmount     Decimal  @db.Decimal(18, 2) @map("total_amount")
+  status          RepaymentStatus @default(RECEIVED)
+  // Who submitted this repayment record — the only actor attribution for a
+  // principal-only repayment, which posts no journal (GL-silent until disbursed).
+  recordedById    String?  @map("recorded_by")
+  disbursedAt     DateTime? @map("disbursed_at")
+  disbursedById   String?  @map("disbursed_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  investment  Investment          @relation(fields: [investmentId], references: [id])
+  schedule    RepaymentSchedule?  @relation(fields: [scheduleId], references: [id])
+  recordedBy  User?               @relation("RepaymentRecordedBy", fields: [recordedById], references: [id])
+  disbursedBy User?               @relation("RepaymentDisbursedBy", fields: [disbursedById], references: [id])
+
+  @@map("repayments")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// General Ledger (blueprint §12–14) — the source of financial truth
+// ────────────────────────────────────────────────────────────────────────
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+enum AccountStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Account {
+  id             String   @id @default(uuid())
+  accountCode    String   @unique @map("account_code")
+  accountName    String   @map("account_name")
+  accountType    AccountType @map("account_type")
+  parentAccountId String?  @map("parent_account_id")
+  currency       String   @default("INR")
+  status         AccountStatus @default(ACTIVE)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  parentAccount Account?  @relation("AccountHierarchy", fields: [parentAccountId], references: [id])
+  childAccounts Account[] @relation("AccountHierarchy")
+  journalLines  JournalLine[]
+  reconciliations InvestorGlReconciliation[]
+  reconciliationItems InvestorGlReconciliationItem[]
+
+  @@map("accounts")
+}
+
+enum JournalEntryStatus {
+  PENDING_APPROVAL
+  POSTED
+  REVERSED
+}
+
+model JournalEntry {
+  id              String   @id @default(uuid())
+  journalNumber   String   @unique @map("journal_number")
+  transactionDate DateTime @map("transaction_date")
+  transactionType String   @map("transaction_type")
+  referenceType   String   @map("reference_type")
+  referenceId     String   @map("reference_id")
+  description     String?
+  status          JournalEntryStatus @default(POSTED)
+  createdById     String   @map("created_by")
+  approvedById    String?  @map("approved_by")
+  postedAt        DateTime? @map("posted_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  createdBy  User   @relation("JournalCreatedBy", fields: [createdById], references: [id])
+  approvedBy User?  @relation("JournalApprovedBy", fields: [approvedById], references: [id])
+
+  lines              JournalLine[]
+  walletTransactions WalletTransaction[]
+
+  @@index([referenceType, referenceId])
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id             String   @id @default(uuid())
+  journalEntryId String   @map("journal_entry_id")
+  accountId      String   @map("account_id")
+  investorId     String?  @map("investor_id")
+  investmentId   String?  @map("investment_id")
+  debit          Decimal  @db.Decimal(18, 2) @default(0)
+  credit         Decimal  @db.Decimal(18, 2) @default(0)
+  currency       String
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id])
+  account      Account      @relation(fields: [accountId], references: [id])
+  investor     Investor?    @relation(fields: [investorId], references: [id])
+  investment   Investment?  @relation(fields: [investmentId], references: [id])
+
+  @@index([accountId])
+  @@index([investorId])
+  @@map("journal_lines")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Withdrawals (blueprint §19, §24) — request/approve/complete workflow,
+// not part of the blueprint's DB sketch but required by the workflow.
+// ────────────────────────────────────────────────────────────────────────
+
+enum WithdrawalStatus {
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  PROCESSING
+  COMPLETED
+  REJECTED
+  FAILED
+  CANCELLED
+}
+
+model Withdrawal {
+  id                  String   @id @default(uuid())
+  withdrawalNumber    String   @unique @map("withdrawal_number")
+  investorId          String   @map("investor_id")
+  amount              Decimal  @db.Decimal(18, 2)
+  currency            String
+  status              WithdrawalStatus @default(PENDING)
+  walletTransactionId String?  @unique @map("wallet_transaction_id")
+  requestedById       String   @map("requested_by")
+  approvedById        String?  @map("approved_by")
+  rejectionReason     String?  @map("rejection_reason")
+  requestedAt         DateTime @default(now()) @map("requested_at")
+  approvedAt          DateTime? @map("approved_at")
+  completedAt         DateTime? @map("completed_at")
+
+  investor    Investor @relation(fields: [investorId], references: [id])
+  requestedBy User     @relation("WithdrawalRequestedBy", fields: [requestedById], references: [id])
+  approvedBy  User?    @relation("WithdrawalApprovedBy", fields: [approvedById], references: [id])
+
+  @@map("withdrawals")
+}
+
+enum DepositStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// Investor-initiated deposit claim. Unlike Withdrawal there is no separate
+// "complete" step: approval IS the confirmation that cash arrived, so it
+// posts the GL/wallet credit directly. Rejection never touches the ledger.
+model Deposit {
+  id                  String   @id @default(uuid())
+  depositNumber       String   @unique @map("deposit_number")
+  investorId          String   @map("investor_id")
+  amount              Decimal  @db.Decimal(18, 2)
+  currency            String
+  paymentReference    String   @unique @map("payment_reference")
+  status              DepositStatus @default(PENDING)
+  walletTransactionId String?  @unique @map("wallet_transaction_id")
+  requestedById       String   @map("requested_by")
+  approvedById        String?  @map("approved_by")
+  rejectionReason     String?  @map("rejection_reason")
+  requestedAt         DateTime @default(now()) @map("requested_at")
+  approvedAt          DateTime? @map("approved_at")
+
+  investor    Investor @relation(fields: [investorId], references: [id])
+  requestedBy User     @relation("DepositRequestedBy", fields: [requestedById], references: [id])
+  approvedBy  User?    @relation("DepositApprovedBy", fields: [approvedById], references: [id])
+
+  @@map("deposits")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Investor GL <-> Sub-ledger reconciliation (mandatory control)
+// ────────────────────────────────────────────────────────────────────────
+
+enum ReconciliationStatus {
+  RECONCILED
+  EXCEPTION
+}
+
+model InvestorGlReconciliation {
+  id                    String   @id @default(uuid())
+  reconciliationNumber  String   @unique @map("reconciliation_number")
+  reconciliationDate    DateTime @map("reconciliation_date")
+  accountId             String   @map("account_id")
+  currency              String
+  glBalance             Decimal  @db.Decimal(18, 2) @map("gl_balance")
+  subledgerBalance      Decimal  @db.Decimal(18, 2) @map("subledger_balance")
+  difference            Decimal  @db.Decimal(18, 2)
+  status                ReconciliationStatus
+  preparedById          String   @map("prepared_by")
+  reviewedById          String?  @map("reviewed_by")
+  reviewedAt            DateTime? @map("reviewed_at")
+  comments              String?
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  account    Account @relation(fields: [accountId], references: [id])
+  preparedBy User    @relation("ReconciliationPreparedBy", fields: [preparedById], references: [id])
+  reviewedBy User?   @relation("ReconciliationReviewedBy", fields: [reviewedById], references: [id])
+  items      InvestorGlReconciliationItem[]
+
+  @@index([accountId, reconciliationDate])
+  @@map("investor_gl_reconciliations")
+}
+
+enum ReconciliationExceptionType {
+  FAILED_PAYMENT
+  DUPLICATE_PAYMENT
+  MISSING_JOURNAL
+  INCORRECT_INVESTOR_ALLOCATION
+  INCORRECT_REVERSAL
+  BANK_RECONCILIATION_ISSUE
+  MANUAL_ADJUSTMENT
+  TIMING_DIFFERENCE
+  SYSTEM_ERROR
+  UNCLASSIFIED
+}
+
+enum ReconciliationItemStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+}
+
+model InvestorGlReconciliationItem {
+  id               String   @id @default(uuid())
+  reconciliationId String   @map("reconciliation_id")
+  investorId       String   @map("investor_id")
+  accountId        String   @map("account_id")
+  glAmount         Decimal  @db.Decimal(18, 2) @map("gl_amount")
+  subledgerAmount  Decimal  @db.Decimal(18, 2) @map("subledger_amount")
+  difference       Decimal  @db.Decimal(18, 2)
+  exceptionType    ReconciliationExceptionType @default(UNCLASSIFIED) @map("exception_type")
+  status           ReconciliationItemStatus @default(OPEN)
+  resolution       String?
+  resolvedById     String?  @map("resolved_by")
+  resolvedAt       DateTime? @map("resolved_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  reconciliation InvestorGlReconciliation @relation(fields: [reconciliationId], references: [id])
+  investor       Investor @relation(fields: [investorId], references: [id])
+  account        Account  @relation(fields: [accountId], references: [id])
+
+  @@map("investor_gl_reconciliation_items")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Audit trail (blueprint §27) — every sensitive action
+// ────────────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?  @map("actor_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  before     Json?
+  after      Json?
+  ipAddress  String?  @map("ip_address")
+  reason     String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
