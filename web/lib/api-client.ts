@@ -38,6 +38,8 @@ import type {
   WithdrawalStatus,
 } from './types';
 
+import { AUTH_STORAGE_KEY } from './auth-context';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000';
 
 export class ApiClientError extends Error {
@@ -79,6 +81,16 @@ async function request<T>(
   const data = text ? JSON.parse(text) : undefined;
 
   if (!res.ok) {
+    // A 401 on an authenticated request means the session token expired or was revoked —
+    // clear it and bounce to login instead of leaving every page stuck on "Loading…" forever
+    // (queries don't retry, so isLoading turns false but data stays undefined). A 401 from an
+    // unauthenticated call (e.g. bad login credentials) has no token attached, so it's exempt.
+    if (res.status === 401 && options.token && typeof window !== 'undefined') {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
     throw new ApiClientError(res.status, extractMessage(data));
   }
   return data as T;

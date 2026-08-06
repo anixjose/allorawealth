@@ -16,7 +16,8 @@ interface AuthContextValue extends AuthState {
   hasPermission: (permission: string) => boolean;
 }
 
-const STORAGE_KEY = 'investment-platform.auth';
+export const AUTH_STORAGE_KEY = 'investment-platform.auth';
+const STORAGE_KEY = AUTH_STORAGE_KEY;
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
